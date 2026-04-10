@@ -1221,10 +1221,6 @@ static void put_deleg_file(struct nfs4_file *fp)
 
 static void nfsd4_finalize_deleg_timestamps(struct nfs4_delegation *dp, struct file *f)
 {
-	struct iattr ia = { .ia_valid = ATTR_ATIME | ATTR_CTIME | ATTR_MTIME | ATTR_DELEG };
-	struct inode *inode = file_inode(f);
-	int ret;
-
 	/* don't do anything if FMODE_NOCMTIME isn't set */
 	if ((READ_ONCE(f->f_mode) & FMODE_NOCMTIME) == 0)
 		return;
@@ -1242,17 +1238,7 @@ static void nfsd4_finalize_deleg_timestamps(struct nfs4_delegation *dp, struct f
 		return;
 
 	/* Stamp everything to "now" */
-	inode_lock(inode);
-	ret = notify_change(&nop_mnt_idmap, f->f_path.dentry, &ia, NULL);
-	inode_unlock(inode);
-	if (ret) {
-		struct inode *inode = file_inode(f);
-
-		pr_notice_ratelimited("nfsd: Unable to update timestamps on inode %02x:%02x:%llu: %d\n",
-					MAJOR(inode->i_sb->s_dev),
-					MINOR(inode->i_sb->s_dev),
-					inode->i_ino, ret);
-	}
+	nfsd_update_cmtime_attr(f, ATTR_ATIME);
 }
 
 static void nfs4_unlock_deleg_lease(struct nfs4_delegation *dp)
@@ -2609,8 +2595,8 @@ static void copy_verf(struct nfs4_client *target, nfs4_verifier *source)
 
 static void copy_clid(struct nfs4_client *target, struct nfs4_client *source)
 {
-	target->cl_clientid.cl_boot = source->cl_clientid.cl_boot; 
-	target->cl_clientid.cl_id = source->cl_clientid.cl_id; 
+	target->cl_clientid.cl_boot = source->cl_clientid.cl_boot;
+	target->cl_clientid.cl_id = source->cl_clientid.cl_id;
 }
 
 static int copy_cred(struct svc_cred *target, struct svc_cred *source)
@@ -3452,7 +3438,7 @@ find_unconfirmed_client(clientid_t *clid, bool sessions, struct nfsd_net *nn)
 static bool clp_used_exchangeid(struct nfs4_client *clp)
 {
 	return clp->cl_exchange_flags != 0;
-} 
+}
 
 static struct nfs4_client *
 find_confirmed_client_by_name(struct xdr_netobj *name, struct nfsd_net *nn)
@@ -4731,7 +4717,7 @@ nfsd4_setclientid_confirm(struct svc_rqst *rqstp,
 			&u->setclientid_confirm;
 	struct nfs4_client *conf, *unconf;
 	struct nfs4_client *old = NULL;
-	nfs4_verifier confirm = setclientid_confirm->sc_confirm; 
+	nfs4_verifier confirm = setclientid_confirm->sc_confirm;
 	clientid_t * clid = &setclientid_confirm->sc_clientid;
 	__be32 status;
 	struct nfsd_net	*nn = net_generic(SVC_NET(rqstp), nfsd_net_id);
@@ -7790,7 +7776,7 @@ nfsd4_open_downgrade(struct svc_rqst *rqstp,
 	struct nfs4_ol_stateid *stp;
 	struct nfsd_net *nn = net_generic(SVC_NET(rqstp), nfsd_net_id);
 
-	dprintk("NFSD: nfsd4_open_downgrade on file %pd\n", 
+	dprintk("NFSD: nfsd4_open_downgrade on file %pd\n",
 			cstate->current_fh.fh_dentry);
 
 	/* We don't yet support WANT bits: */
@@ -7801,7 +7787,7 @@ nfsd4_open_downgrade(struct svc_rqst *rqstp,
 	status = nfs4_preprocess_confirmed_seqid_op(cstate, od->od_seqid,
 					&od->od_stateid, &stp, nn);
 	if (status)
-		goto out; 
+		goto out;
 	status = nfserr_inval;
 	if (!test_access(od->od_share_access, stp)) {
 		dprintk("NFSD: access not a subset of current bitmap: 0x%hhx, input access=%08x\n",
@@ -8066,7 +8052,7 @@ nevermind:
 	deny->ld_start = fl->fl_start;
 	deny->ld_length = NFS4_MAX_UINT64;
 	if (fl->fl_end != NFS4_MAX_UINT64)
-		deny->ld_length = fl->fl_end - fl->fl_start + 1;        
+		deny->ld_length = fl->fl_end - fl->fl_start + 1;
 	deny->ld_type = NFS4_READ_LT;
 	if (fl->c.flc_type != F_RDLCK)
 		deny->ld_type = NFS4_WRITE_LT;
@@ -8120,8 +8106,8 @@ static const struct nfs4_stateowner_operations lockowner_ops = {
 
 /*
  * Alloc a lock owner structure.
- * Called in nfsd4_lock - therefore, OPEN and OPEN_CONFIRM (if needed) has 
- * occurred. 
+ * Called in nfsd4_lock - therefore, OPEN and OPEN_CONFIRM (if needed) has
+ * occurred.
  *
  * strhashval = ownerstr_hashval
  */
@@ -8313,7 +8299,7 @@ out:
 }
 
 /*
- *  LOCK operation 
+ *  LOCK operation
  */
 __be32
 nfsd4_lock(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
@@ -9562,4 +9548,32 @@ out_delegees:
 	put_deleg_file(fp);
 	put_nfs4_file(fp);
 	return ERR_PTR(status);
+}
+
+/**
+ * nfsd_update_cmtime_attr - update file's delegated ctime/mtime,
+ *                           and optionally other attributes (ie ATTR_ATIME).
+ * @f: pointer to an opened file
+ * @flags: any additional flags that should be updated
+ *
+ * Given upon opening a file delegated attributes were issues, update
+ * @f attributes to current times.
+ */
+void nfsd_update_cmtime_attr(struct file *f, unsigned int flags)
+{
+	int ret;
+	struct inode *inode = file_inode(f);
+	struct iattr attr = {
+		.ia_valid = ATTR_CTIME | ATTR_MTIME | ATTR_DELEG | flags,
+	};
+
+	inode_lock(inode);
+	ret = notify_change(&nop_mnt_idmap, f->f_path.dentry, &attr, NULL);
+	inode_unlock(inode);
+	if (ret)
+		pr_notice_ratelimited("nfsd: Unable to update timestamps on "
+				      "inode %02x:%02x:%lu: %d\n",
+				      MAJOR(inode->i_sb->s_dev),
+				      MINOR(inode->i_sb->s_dev),
+				      inode->i_ino, ret);
 }
