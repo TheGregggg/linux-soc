@@ -443,6 +443,8 @@ static int aspeed_ast2600_vuart_over_pci_enabled(struct platform_device *pdev)
 
 	u32 pcie_config_ctl = SCU_PCIE_CONF_BMC_DEV_EN_IRQ |
 						SCU_PCIE_CONF_BMC_DEV_EN_MMIO |
+						SCU_PCIE_CONF_BMC_DEV_EN_MSI |
+						SCU_PCIE_CONF_BMC_DEV_EN_PCIE_BUS_MASTER |
 						SCU_PCIE_CONF_BMC_DEV_EN;
 
 	scu = syscon_regmap_lookup_by_phandle(dev->of_node, "clocks");
@@ -451,13 +453,11 @@ static int aspeed_ast2600_vuart_over_pci_enabled(struct platform_device *pdev)
 		return PTR_ERR(scu);
 	}
 
-	regmap_update_bits(scu, ASPEED_SCU_PCIE_CONF_CTRL,
-			   pcie_config_ctl, pcie_config_ctl);
-
 	/* update class code to others as it is a MFD device */
 	regmap_write(scu, ASPEED_SCU_BMC_DEV_CLASS, 0xff000000);
 
-	regmap_update_bits(scu, ASPEED_SCU_PCIE_CONF_CTRL, SCU_PCIE_CONF_BMC_DEV_EN_MSI | SCU_PCIE_CONF_BMC_DEV_EN_PCIE_BUS_MASTER, SCU_PCIE_CONF_BMC_DEV_EN_MSI | SCU_PCIE_CONF_BMC_DEV_EN_PCIE_BUS_MASTER);
+	regmap_update_bits(scu, ASPEED_SCU_PCIE_CONF_CTRL,
+			   pcie_config_ctl, pcie_config_ctl);
 
 	regmap_read(scu, ASPEED_SCU_SILICON_REVISION_ID, &silicon_revision_id);
 	if (silicon_revision_id == AST2600A3_REVISION_ID)
