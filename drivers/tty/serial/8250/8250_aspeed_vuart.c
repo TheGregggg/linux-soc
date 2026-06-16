@@ -5,6 +5,7 @@
  *    Copyright (C) 2016 Jeremy Kerr <jk@ozlabs.org>, IBM Corp.
  *    Copyright (C) 2006 Arnd Bergmann <arnd@arndb.de>, IBM Corp.
  */
+#include "linux/dev_printk.h"
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
@@ -31,6 +32,28 @@
 #define ASPEED_VUART_DEFAULT_LPC_ADDR	0x3f8
 #define ASPEED_VUART_DEFAULT_SIRQ	4
 #define ASPEED_VUART_DEFAULT_SIRQ_POLARITY	IRQ_TYPE_LEVEL_LOW
+
+#define ASPEED_SCU_SILICON_REVISION_ID			0x04
+#define AST2600A3_REVISION_ID				0x05030303
+
+#define ASPEED_SCUC24			0xC24
+#define  ASPEED_SCUC24_MSI_ROUTING_MASK			GENMASK(11, 10)
+#define  ASPEED_SCUC24_MSI_ROUTING_PCIe2LPC_PCIDEV0		(0x1 << 10)
+#define  ASPEED_SCUC24_MSI_ROUTING_PCIe2LPC_PCIDEV1		(0x2 << 10)
+#define  ASPEED_SCUC24_PCIDEV1_INTX_MSI_HOST2BMC_EN		BIT(18)
+#define  ASPEED_SCUC24_PCIDEV1_INTX_MSI_SCU560_EN			BIT(17)
+
+
+#define ASPEED_SCU_PCIE_CONF_CTRL	0xC20
+#define  SCU_PCIE_CONF_BMC_DEV_EN			 		BIT(8)
+#define  SCU_PCIE_CONF_BMC_DEV_EN_MMIO		 		BIT(9)
+#define  SCU_PCIE_CONF_BMC_DEV_EN_MSI		 		BIT(11)
+#define  SCU_PCIE_CONF_BMC_DEV_EN_IRQ				BIT(13)
+#define  SCU_PCIE_CONF_BMC_DEV_EN_PCIE_BUS_MASTER	BIT(14)
+#define  SCU_PCIE_CONF_BMC_DEV_EN_E2L		 		BIT(15)
+#define  SCU_PCIE_CONF_BMC_DEV_EN_LPC_DECODE 		BIT(21)
+
+#define ASPEED_SCU_BMC_DEV_CLASS	0xC68
 
 struct aspeed_vuart {
 	struct device		*dev;
@@ -412,6 +435,45 @@ static int aspeed_vuart_map_irq_polarity(u32 dt)
 	}
 }
 
+static int aspeed_ast2600_vuart_over_pci_enabled(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	u32 silicon_revision_id;
+	struct regmap *scu;
+
+	u32 pcie_config_ctl = SCU_PCIE_CONF_BMC_DEV_EN_IRQ |
+						SCU_PCIE_CONF_BMC_DEV_EN_MMIO |
+						SCU_PCIE_CONF_BMC_DEV_EN;
+
+	scu = syscon_regmap_lookup_by_phandle(dev->of_node, "clocks");
+	if (IS_ERR(scu)) {
+		dev_err(&pdev->dev, "failed to find SCU regmap\n");
+		return PTR_ERR(scu);
+	}
+
+	regmap_update_bits(scu, ASPEED_SCU_PCIE_CONF_CTRL,
+			   pcie_config_ctl, pcie_config_ctl);
+
+	/* update class code to others as it is a MFD device */
+	regmap_write(scu, ASPEED_SCU_BMC_DEV_CLASS, 0xff000000);
+
+	regmap_update_bits(scu, ASPEED_SCU_PCIE_CONF_CTRL, SCU_PCIE_CONF_BMC_DEV_EN_MSI | SCU_PCIE_CONF_BMC_DEV_EN_PCIE_BUS_MASTER, SCU_PCIE_CONF_BMC_DEV_EN_MSI | SCU_PCIE_CONF_BMC_DEV_EN_PCIE_BUS_MASTER);
+
+	regmap_read(scu, ASPEED_SCU_SILICON_REVISION_ID, &silicon_revision_id);
+	if (silicon_revision_id == AST2600A3_REVISION_ID)
+		regmap_update_bits(scu, ASPEED_SCUC24,
+				   ASPEED_SCUC24_PCIDEV1_INTX_MSI_HOST2BMC_EN | ASPEED_SCUC24_MSI_ROUTING_MASK,
+				   ASPEED_SCUC24_PCIDEV1_INTX_MSI_HOST2BMC_EN | ASPEED_SCUC24_MSI_ROUTING_PCIe2LPC_PCIDEV1);
+	else
+		regmap_update_bits(scu, ASPEED_SCUC24,
+				   ASPEED_SCUC24_PCIDEV1_INTX_MSI_SCU560_EN | BIT(14) | ASPEED_SCUC24_MSI_ROUTING_MASK, ASPEED_SCUC24_PCIDEV1_INTX_MSI_SCU560_EN | BIT(14) | ASPEED_SCUC24_MSI_ROUTING_PCIe2LPC_PCIDEV1);
+
+	dev_info(dev, "vuart-over-pci init finished");
+	
+	return 0;
+}
+
+
 static int aspeed_vuart_probe(struct platform_device *pdev)
 {
 	struct of_phandle_args sirq_polarity_sense_args;
@@ -540,6 +602,13 @@ static int aspeed_vuart_probe(struct platform_device *pdev)
 	aspeed_vuart_set_host_tx_discard(vuart, true);
 	platform_set_drvdata(pdev, vuart);
 
+	if (of_device_is_compatible(dev->of_node, "aspeed,ast2600-vuart") && 
+		of_property_read_bool(dev->of_node, "aspeed,vuart-over-pci")){
+			dev_info(dev, "vuart-over-pci ativating");
+			aspeed_ast2600_vuart_over_pci_enabled(pdev);
+	}
+
+
 	return 0;
 
 err_sysfs_remove:
@@ -560,6 +629,7 @@ static void aspeed_vuart_remove(struct platform_device *pdev)
 static const struct of_device_id aspeed_vuart_table[] = {
 	{ .compatible = "aspeed,ast2400-vuart" },
 	{ .compatible = "aspeed,ast2500-vuart" },
+	{ .compatible = "aspeed,ast2600-vuart" },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, aspeed_vuart_table);
