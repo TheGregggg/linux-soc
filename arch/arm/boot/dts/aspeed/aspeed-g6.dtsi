@@ -723,8 +723,8 @@
 				interrupts = <GIC_SPI 180 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&syscon ASPEED_CLK_APB2>;
 				no-loopback-test;
-				status = "disabled";
 				aspeed,vuart-over-pci;
+				status = "disabled";
 			};
 
 			vuart2: serial@1e788000 {
@@ -744,8 +744,8 @@
 				interrupts = <GIC_SPI 181 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&syscon ASPEED_CLK_APB2>;
 				no-loopback-test;
-				status = "disabled";
 				aspeed,vuart-over-pci;
+				status = "disabled";
 			};
 
 			uart2: serial@1e78d000 {
