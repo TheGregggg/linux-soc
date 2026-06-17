@@ -23,8 +23,9 @@ allOf:
     then:
       properties:
         compatible:
-          - const: aspeed,ast2500-vuart
-          - const: aspeed,ast2600-vuart
+          anyOf:
+            - const: aspeed,ast2500-vuart
+            - const: aspeed,ast2600-vuart
   - if:
       anyOf:
         - required:
@@ -32,7 +33,7 @@ allOf:
     then:
       properties:
         compatible:
-          - const: aspeed,ast2600-vuart
+          const: aspeed,ast2600-vuart
 
   - if:
       properties:
