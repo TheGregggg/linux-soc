@@ -27,6 +27,14 @@ allOf:
             - const: aspeed,ast2500-vuart
             - const: aspeed,ast2600-vuart
   - if:
+      anyOf:
+        - required:
+            - aspeed,vuart-over-pci
+    then:
+      properties:
+        compatible:
+          const: aspeed,ast2600-vuart
+  - if:
       properties:
         compatible:
           const: mrvl,mmp-uart
@@ -311,6 +319,13 @@ properties:
       A 2-cell property describing the VUART SIRQ number and SIRQ
       polarity (IRQ_TYPE_LEVEL_LOW or IRQ_TYPE_LEVEL_HIGH).  Only
       applicable to aspeed,ast2500-vuart and aspeed,ast2600-vuart.
+  
+  aspeed,vuart-over-pci:
+    type: boolean
+    default: false
+    description: |
+      Enable the VUART over the BMC PCI device. Only applicable to 
+      aspeed,ast2600-vuart.
 
 required:
   - reg
